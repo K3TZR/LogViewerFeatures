@@ -4,14 +4,14 @@
 import PackageDescription
 
 let package = Package(
-  name: "ViewFeatures",
+  name: "LogViewerFeatures",
   platforms: [
     .macOS(.v13),
   ],
   
   products: [
     .library(name: "LogView", targets: ["LogView"]),
- ],
+  ],
   
   dependencies: [
     // ----- K3TZR -----
@@ -19,7 +19,7 @@ let package = Package(
     // ----- OTHER -----
     .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.0.0"),
   ],
-
+  
   // --------------- Modules ---------------
   targets: [
     // LogView
@@ -28,5 +28,5 @@ let package = Package(
               .product(name: "FlexApi", package: "ApiFeatures"),
               .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ]),
-    ]
+  ]
 )
