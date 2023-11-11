@@ -9,55 +9,57 @@
 import ComposableArchitecture
 import SwiftUI
 
-import Shared
+import SettingsModel
+import SharedModel
 
 // ----------------------------------------------------------------------------
 // MARK: - View
 
 /// A View to display the contents of the app's log
 ///
-public struct LogView: View {  
-  let store: StoreOf<LogFeature>
-  
-  public init(store: StoreOf<LogFeature>) {
-    self.store = store
-  }
+public struct LogView: View {
+  let domain: String
+  let appName: String
+  let folderUrl: URL
 
+  public init(domain: String, appName: String, folderUrl: URL) {
+    self.domain = domain
+    self.appName = appName
+    self.folderUrl = folderUrl
+  }
+  
+  @Environment(LogModel.self) var logModel
+  
   public var body: some View {
     
-    WithViewStore(self.store, observe: { $0 }) { viewStore in
-      VStack {
-        LogHeader(viewStore: viewStore)
-        Divider().background(Color(.red))
-        Spacer()
-        LogBodyView(viewStore: viewStore)
-        Spacer()
-        Divider().background(Color(.red))
-        LogFooter(viewStore: viewStore)
-      }
-      .onAppear { viewStore.send(.onAppear) }
+    VStack {
+      LogHeader()
+      Divider().background(Color(.red))
+      Spacer()
+      LogBodyView()
+      Spacer()
+      Divider().background(Color(.red))
+      LogFooter()
     }
+    .onAppear { logModel.onAppear(folderUrl, appName) }
     .frame(minWidth: 700, maxWidth: .infinity, alignment: .leading)
     .padding(10)
   }
 }
 
 struct LogHeader: View {
-  let viewStore: ViewStore<LogFeature.State, LogFeature.Action>
 
-  @AppStorage("showTimestamps") var showTimestamps = false
-  @AppStorage("logLevel") var logLevel: LogLevel = .debug
-  @AppStorage("logFilter") var logFilter: LogFilter = .none
-  @AppStorage("logFilterText") var logFilterText = ""
-
+  @Environment(LogModel.self) var logModel
+  @Environment(SettingsModel.self) var settings
+  
   var body: some View {
+    @Bindable var settingsBindable = settings
+    
     HStack(spacing: 10) {
-      Toggle("Show Timestamps", isOn: viewStore.binding(get: {_ in showTimestamps}, send: .showTimestamps ))
+      Toggle("Show Timestamps", isOn: $settingsBindable.logViewerShowTimestamps )
       Spacer()
       
-      Picker("Show Level", selection: viewStore.binding(
-        get: {_ in logLevel },
-        send: { .levelPicker($0) } )) {
+      Picker("Show Level", selection: $settingsBindable.logViewerShowLevel) {
           ForEach(LogLevel.allCases, id: \.self) {
             Text($0.rawValue).tag($0)
           }
@@ -66,53 +68,59 @@ struct LogHeader: View {
       
       Spacer()
       
-      Picker("Filter by", selection: viewStore.binding(
-        get: {_ in logFilter },
-        send: { .filterPicker($0) } )) {
+      Picker("Filter by", selection: $settingsBindable.logViewerFilterBy) {
           ForEach(LogFilter.allCases, id: \.self) {
             Text($0.rawValue).tag($0)
           }
         }
         .pickerStyle(MenuPickerStyle())
       
-      Image(systemName: "x.circle").foregroundColor(logFilterText == "" ? .gray : nil)
-        .onTapGesture { viewStore.send(.filterTextField("")) }
-      TextField("Filter text", text: viewStore.binding(
-        get: {_ in logFilterText },
-        send: { .filterTextField($0) }))
+      Image(systemName: "x.circle").foregroundColor(settings.logViewerFilterText == "" ? .gray : nil)
+        .onTapGesture { settings.logViewerFilterText = "" }
+      TextField("Filter text", text: $settingsBindable.logViewerFilterText)
       .frame(maxWidth: 300, alignment: .leading)
+    }
+    .onChange(of: settings.logViewerShowTimestamps) {
+      logModel.filterLog()
+    }
+    .onChange(of: settings.logViewerShowLevel) {
+      logModel.filterLog()
+    }
+    .onChange(of: settings.logViewerFilterBy) {
+      logModel.filterLog()
+    }
+    .onChange(of: settings.logViewerFilterText) {
+      logModel.filterLog()
     }
   }
 }
 
 struct LogBodyView: View {
-  let viewStore: ViewStore<LogFeature.State, LogFeature.Action>
   
-  @AppStorage("fontSize") var fontSize: Double = 12
-  @AppStorage("gotoLast") var gotoLast = false
+  @Environment(SettingsModel.self) var settings
 
   var body: some View {
     ScrollViewReader { proxy in
       ScrollView([.horizontal, .vertical]) {
         VStack(alignment: .leading) {
-          ForEach( viewStore.filteredLines) { message in
+          ForEach( LogModel.shared.filteredLogLines) { message in
             Text(message.text)
-              .font(.system(size: fontSize, weight: .regular, design: .monospaced))
+              .font(.system(size: settings.logViewerFontSize, weight: .regular, design: .monospaced))
               .foregroundColor(message.color)
               .textSelection(.enabled)
           }
-          .onChange(of: gotoLast, perform: { _ in
-            if viewStore.filteredLines.count > 0 {
-              let id = gotoLast ? viewStore.filteredLines.last!.id : viewStore.filteredLines.first!.id
+          .onChange(of: settings.logViewerGoToLast) {
+            if LogModel.shared.filteredLogLines.count > 0 {
+              let id = settings.logViewerGoToLast ? LogModel.shared.filteredLogLines.last!.id : LogModel.shared.filteredLogLines.first!.id
               proxy.scrollTo(id, anchor: .bottomLeading)
             }
-          })
-          .onChange(of: viewStore.filteredLines.count, perform: { _ in
-            if viewStore.filteredLines.count > 0 {
-              let id = gotoLast ? viewStore.filteredLines.last!.id : viewStore.filteredLines.first!.id
+          }
+          .onChange(of: LogModel.shared.filteredLogLines.count) {
+            if LogModel.shared.filteredLogLines.count > 0 {
+              let id = settings.logViewerGoToLast ? LogModel.shared.filteredLogLines.last!.id : LogModel.shared.filteredLogLines.first!.id
               proxy.scrollTo(id, anchor: .bottomLeading)
             }
-          })
+          }
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -121,58 +129,55 @@ struct LogBodyView: View {
 }
 
 struct LogFooter: View {
-  let viewStore: ViewStore<LogFeature.State, LogFeature.Action>
 
-  @AppStorage("autoRefresh") var autoRefresh = false
-  @AppStorage("fontSize") var fontSize: Double = 12
-  @AppStorage("gotoLast") var gotoLast = false
+  @Environment(LogModel.self) var logModel
+  @Environment(SettingsModel.self) var settings
 
   var body: some View {
+    @Bindable var settingsBindable = settings
+
     HStack {
-      Stepper("Font Size",
-              value: viewStore.binding(
-                get: {_ in fontSize },
-                send: { .fontSizeStepper($0) }),
-              in: 8...14)
-      Text(String(format: "%2.0f", fontSize)).frame(alignment: .leading)
+      Stepper("Font Size", value: $settingsBindable.logViewerFontSize, in: 8...14)
+      Text(String(format: "%2.0f", settings.logViewerFontSize)).frame(alignment: .leading)
       
       Spacer()
       
       HStack {
-        Text("Go to \(gotoLast ? "First" : "Last")")
-        Image(systemName: gotoLast ? "arrow.up.square" : "arrow.down.square").font(.title)
-          .onTapGesture { viewStore.send(.gotoLast) }
+        Text("Go to \(settings.logViewerGoToLast ? "First" : "Last")")
+        Image(systemName: settings.logViewerGoToLast ? "arrow.up.square" : "arrow.down.square").font(.title)
+          .onTapGesture { settings.logViewerGoToLast.toggle() }
       }
       .frame(width: 120, alignment: .trailing)
       Spacer()
       
       HStack(spacing: 20) {
-        Button("Refresh") { viewStore.send(.loadButton) }
-        Toggle("Auto Refresh", isOn: viewStore.binding(get: {_ in autoRefresh }, send: .autoRefresh))
+        Button("Refresh") { logModel.refresh() }
+        Toggle("Auto Refresh", isOn: $settingsBindable.logViewerAutoRefresh)
       }
       Spacer()
       
       HStack(spacing: 20) {
-        Button("Load") { viewStore.send(.loadButton) }
-        Button("Save") { viewStore.send(.saveButton) }
+        Button("Load") { logModel.load() }
+        Button("Save") { logModel.save() }
       }
       
       Spacer()
-      Button("Clear") { viewStore.send(.clearButton) }
+      Button("Clear") { logModel.clear() }
     }
+    .onChange(of: settings.logViewerAutoRefresh) {
+      logModel.autoRefresh()
+    }
+
   }
 }
 
 // ----------------------------------------------------------------------------
 // MARK: - Preview
 
-struct LogView_Previews: PreviewProvider {
-  
-  static var previews: some View {
-    LogView(store: Store(initialState: LogFeature.State(domain: "net.k3tzr", appName: "Sdr6000", folderUrl: FileManager().urls(for: .downloadsDirectory, in: .userDomainMask).first!)) {
-      LogFeature() }
-    )
-      .frame(minWidth: 975, minHeight: 400)
-      .padding()
-  }
+#Preview {
+  LogView(domain: "net.k3tzr",
+          appName: "Sdr6000",
+          folderUrl: FileManager().urls(for: .downloadsDirectory, in: .userDomainMask).first!)
+  .frame(minWidth: 975, minHeight: 400)
+  .padding()
 }
